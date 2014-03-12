@@ -33,7 +33,7 @@ var fileCache map[string]os.File
 var cacheTotal int64
 
 // streamMap maps a fileID to a channel containing a file stream
-var streamMap map[int64]chan[]byte
+var streamMap map[int64]chan []byte
 
 // host is the host of the Subsonic server
 var host = flag.String("host", "", "Host of Subsonic server")
@@ -72,7 +72,7 @@ func main() {
 	cacheTotal = 0
 
 	// Initialize stream map
-	streamMap = map[int64]chan[]byte{}
+	streamMap = map[int64]chan []byte{}
 
 	// Attempt to mount filesystem
 	c, err := fuse.Mount(*mount)
@@ -110,7 +110,7 @@ func main() {
 
 	// Attempt to unmount the FUSE filesystem
 	retry := 3
-	for i := 0; i < retry + 1; i++ {
+	for i := 0; i < retry+1; i++ {
 		// Wait between attempts
 		if i > 0 {
 			<-time.After(time.Second * 3)
@@ -124,7 +124,7 @@ func main() {
 				os.Exit(1)
 			}
 
-			log.Printf("subfs: could not unmount %s, retrying %d of %d...", *mount, i + 1, retry)
+			log.Printf("subfs: could not unmount %s, retrying %d of %d...", *mount, i+1, retry)
 		} else {
 			break
 		}
@@ -319,7 +319,7 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 				// Purge item from cache
 				log.Printf("Cache missing: [%d] %s", s.ID, s.FileName)
 				delete(fileCache, s.FileName)
-				cacheTotal = atomic.AddInt64(&cacheTotal, -1 * s.Size)
+				cacheTotal = atomic.AddInt64(&cacheTotal, -1*s.Size)
 
 				// Print some cache metrics
 				cacheUse := float64(cacheTotal) / 1024 / 1024
@@ -345,7 +345,7 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 			// Wait for stream to be ready, and return it
 			log.Printf("Waiting for stream: [%d] %s", s.ID, s.FileName)
 			byteChan <- <-streamChan
-			log.Print("Received stream: [%d] %s", s.ID, s.FileName)
+			log.Printf("Received stream: [%d] %s", s.ID, s.FileName)
 			close(byteChan)
 			return
 		}
