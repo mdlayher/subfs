@@ -1,12 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,6 +27,12 @@ var nameToDir map[string]SubDir
 // nameToFile maps a file name to its SubFile
 var nameToFile map[string]SubFile
 
+// fileCache maps a file name to its file pointer
+var fileCache map[string]os.File
+
+// cacheTotal is the total size of local files in the cache
+var cacheTotal int64
+
 // host is the host of the Subsonic server
 var host = flag.String("host", "", "Host of Subsonic server")
 
@@ -35,6 +44,9 @@ var password = flag.String("password", "", "Password for the Subsonic server")
 
 // mount is the path where subfs will be mounted
 var mount = flag.String("mount", "", "Path where subfs will be mounted")
+
+// cacheSize is the maximum size of the local file cache in megabytes
+var cacheSize = flag.Int64("cache", 100, "Size of the local file cache, in megabytes")
 
 func main() {
 	// Parse command line flags
@@ -53,6 +65,10 @@ func main() {
 	nameToDir = map[string]SubDir{}
 	nameToFile = map[string]SubFile{}
 
+	// Initialize file cache
+	fileCache = map[string]os.File{}
+	cacheTotal = 0
+
 	// Attempt to mount filesystem
 	c, err := fuse.Mount(*mount)
 	if err != nil {
@@ -60,7 +76,7 @@ func main() {
 	}
 
 	// Serve the FUSE filesystem
-	log.Printf("subfs: %s@%s -> %s", *user, *host, *mount)
+	log.Printf("subfs: %s@%s -> %s [cache: %d MB]", *user, *host, *mount, *cacheSize)
 	go fs.Serve(c, SubFS{})
 
 	// Wait for termination singals
@@ -82,6 +98,20 @@ func main() {
 		log.Fatalf("Could not close subfs: %s", err.Error())
 	}
 
+	// Purge all cached files
+	for _, f := range fileCache {
+		// Close file
+		if err := f.Close(); err != nil {
+			log.Println(err)
+		}
+
+		// Remove file
+		if err := os.Remove(f.Name()); err != nil {
+			log.Println(err)
+		}
+	}
+
+	log.Printf("subfs: removed %d cached files", len(fileCache))
 	return
 }
 
@@ -244,7 +274,7 @@ type SubFile struct {
 // Attr returns file attributes (all files read-only)
 func (s SubFile) Attr() fuse.Attr {
 	return fuse.Attr{
-		Mode:  0444,
+		Mode:  0644,
 		Mtime: s.Created,
 		Size:  uint64(s.Size),
 	}
@@ -257,6 +287,22 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 
 	// Fetch file in background
 	go func() {
+		// Check for file in cache
+		if cFile, ok := fileCache[s.FileName]; ok {
+			// Output buffer
+			buf := bytes.NewBuffer(make([]byte, 0))
+
+			// Read all bytes from file into buffer
+			if _, err := io.Copy(buf, &cFile); err == nil {
+				// Return cached file
+				log.Printf("Cached file: [%d] %s", s.ID, s.FileName)
+				byteChan <- buf.Bytes()
+				return
+			} else {
+				log.Println(err)
+			}
+		}
+
 		// Open stream
 		log.Printf("Opening stream: [%d] %s", s.ID, s.FileName)
 		stream, err := subsonic.Stream(s.ID, nil)
@@ -284,6 +330,52 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		// Return bytes
 		log.Printf("Closing stream: [%d] %s", s.ID, s.FileName)
 		byteChan <- file
+
+		// Check for maximum cache size
+		if cacheTotal > *cacheSize*1024*1024 {
+			log.Printf("Cache full (%d MB), skipping local cache", *cacheSize)
+			return
+		}
+
+		// Check if cache will overflow if file is added
+		if cacheTotal+s.Size > *cacheSize*1024*1024 {
+			log.Printf("File will overflow cache (%d MB), skipping local cache", s.Size/1024/1024)
+			return
+		}
+
+		// If file is greater than 50MB, skip caching to conserve memory
+		threshold := 50
+		if s.Size > int64(threshold*1024*1024) {
+			log.Printf("File too large (%0d > %0d MB), skipping local cache", s.Size/1024/1024, threshold)
+			return
+		}
+
+		// Generate a temporary file
+		tmpFile, err := ioutil.TempFile(os.TempDir(), "subfs")
+		if err != nil {
+			log.Println(err)
+			return
+		}
+
+		// Write out temporary file
+		if _, err := tmpFile.Write(file); err != nil {
+			log.Println(err)
+			return
+		}
+
+		// Add file to cache map
+		log.Printf("Caching file: [%d] %s", s.ID, s.FileName)
+		fileCache[s.FileName] = *tmpFile
+
+		// Add file's size to cache total size
+		cacheTotal = atomic.AddInt64(&cacheTotal, s.Size)
+
+		// Print some cache metrics
+		cacheUse := float64(cacheTotal) / 1024 / 1024
+		cacheAdd := float64(s.Size) / 1024 / 1024
+		log.Printf("Cache use: %0.3f / %d.000 MB (+%0.3f MB)", cacheUse, *cacheSize, cacheAdd)
+
+		return
 	}()
 
 	// Wait for an event on read
