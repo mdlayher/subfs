@@ -3,7 +3,8 @@ subfs
 
 Experimental FUSE filesystem for the [Subsonic](http://www.subsonic.org/pages/index.jsp) media server, written in Go.  MIT Licensed.
 
-Full documentation for subfs may be found on [GoDoc](http://godoc.org/github.com/mdlayher/subfs).
+It should be noted that both subfs and its companion library, [gosubsonic](https://github.com/mdlayher/gosubsonic), are highly experimental.
+These components are in need of much more testing, but I am happy with my progress thus far.
 
 Installation
 ============
@@ -11,9 +12,6 @@ Installation
 subfs can be built using Go 1.1+. It can be downloaded, built, and installed, simply by running:
 
 `$ go get github.com/mdlayher/subfs`
-
-It should be noted that both subfs and its companion library, [gosubsonic](https://github.com/mdlayher/gosubsonic), are highly experimental.
-These components are in need of much more testing, but I am happy with my progress thus far.
 
 Usage
 =====
