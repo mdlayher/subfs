@@ -167,9 +167,12 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 
 		// Iterate all returned media
 		for _, m := range content.Media {
+			// Predefined media filename format
+			mediaFormat := fmt.Sprintf("%02d - %s - %s.%s", m.Track, m.Artist, m.Title, m.Suffix)
+
 			// Create a directory entry
 			dir := fuse.Dirent{
-				Name: fmt.Sprintf("%02d - %s.%s", m.Track, m.Title, m.Suffix),
+				Name: mediaFormat,
 				Type: fuse.DT_File,
 			}
 
@@ -177,7 +180,7 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 			nameToFile[dir.Name] = SubFile{
 				ID:       m.ID,
 				Created:  m.Created,
-				FileName: fmt.Sprintf("%02d - %s.%s", m.Track, m.Title, m.Suffix),
+				FileName: mediaFormat,
 				Size:     m.Size,
 			}
 
