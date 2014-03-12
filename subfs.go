@@ -1,14 +1,13 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -289,17 +288,28 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 	go func() {
 		// Check for file in cache
 		if cFile, ok := fileCache[s.FileName]; ok {
-			// Output buffer
-			buf := bytes.NewBuffer(make([]byte, 0))
+			// Check for empty file, meaning the cached file got wiped out
+			buf, err := ioutil.ReadFile(cFile.Name())
+			if len(buf) == 0 && strings.Contains(err.Error(), "no such file or directory") {
+				// Purge item from cache
+				log.Printf("Cache missing: [%d] %s", s.ID, s.FileName)
+				delete(fileCache, s.FileName)
+				cacheTotal = atomic.AddInt64(&cacheTotal, -1 * s.Size)
 
-			// Read all bytes from file into buffer
-			if _, err := io.Copy(buf, &cFile); err == nil {
+				// Print some cache metrics
+				cacheUse := float64(cacheTotal) / 1024 / 1024
+				cacheDel := float64(s.Size) / 1024 / 1024
+				log.Printf("Cache use: %0.3f / %d.000 MB (-%0.3f MB)", cacheUse, *cacheSize, cacheDel)
+
+				// Close file handle
+				if err := cFile.Close(); err != nil {
+					log.Println(err)
+				}
+			} else {
 				// Return cached file
 				log.Printf("Cached file: [%d] %s", s.ID, s.FileName)
-				byteChan <- buf.Bytes()
+				byteChan <- buf
 				return
-			} else {
-				log.Println(err)
 			}
 		}
 
@@ -339,14 +349,14 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 
 		// Check if cache will overflow if file is added
 		if cacheTotal+s.Size > *cacheSize*1024*1024 {
-			log.Printf("File will overflow cache (%d MB), skipping local cache", s.Size/1024/1024)
+			log.Printf("File will overflow cache (%0.3f MB), skipping local cache", float64(s.Size)/1024/1024)
 			return
 		}
 
 		// If file is greater than 50MB, skip caching to conserve memory
 		threshold := 50
 		if s.Size > int64(threshold*1024*1024) {
-			log.Printf("File too large (%0d > %0d MB), skipping local cache", s.Size/1024/1024, threshold)
+			log.Printf("File too large (%0.3f > %0d MB), skipping local cache", float64(s.Size)/1024/1024, threshold)
 			return
 		}
 
