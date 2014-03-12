@@ -32,6 +32,9 @@ var fileCache map[string]os.File
 // cacheTotal is the total size of local files in the cache
 var cacheTotal int64
 
+// streamMap maps a fileID to a channel containing a file stream
+var streamMap map[int64]chan[]byte
+
 // host is the host of the Subsonic server
 var host = flag.String("host", "", "Host of Subsonic server")
 
@@ -67,6 +70,9 @@ func main() {
 	// Initialize file cache
 	fileCache = map[string]os.File{}
 	cacheTotal = 0
+
+	// Initialize stream map
+	streamMap = map[int64]chan[]byte{}
 
 	// Attempt to mount filesystem
 	c, err := fuse.Mount(*mount)
@@ -328,9 +334,24 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 				// Return cached file
 				log.Printf("Cached file: [%d] %s", s.ID, s.FileName)
 				byteChan <- buf
+				close(byteChan)
 				return
 			}
 		}
+
+		// Check for pre-existing stream in progress, so that multiple clients can receive it without
+		// requesting the stream multiple times.  Yeah concurrency!
+		if streamChan, ok := streamMap[s.ID]; ok {
+			// Wait for stream to be ready, and return it
+			log.Printf("Waiting for stream: [%d] %s", s.ID, s.FileName)
+			byteChan <- <-streamChan
+			log.Print("Received stream: [%d] %s", s.ID, s.FileName)
+			close(byteChan)
+			return
+		}
+
+		// Generate a channel for clients wishing to wait on this stream
+		streamMap[s.ID] = make(chan []byte, 0)
 
 		// Open stream
 		log.Printf("Opening stream: [%d] %s", s.ID, s.FileName)
@@ -338,6 +359,7 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err != nil {
 			log.Println(err)
 			byteChan <- nil
+			close(byteChan)
 			return
 		}
 
@@ -346,6 +368,7 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err != nil {
 			log.Println(err)
 			byteChan <- nil
+			close(byteChan)
 			return
 		}
 
@@ -353,12 +376,19 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err := stream.Close(); err != nil {
 			log.Println(err)
 			byteChan <- nil
+			close(byteChan)
 			return
 		}
 
 		// Return bytes
 		log.Printf("Closing stream: [%d] %s", s.ID, s.FileName)
 		byteChan <- file
+		close(byteChan)
+
+		// Return bytes to others waiting, remove this stream
+		streamMap[s.ID] <- file
+		close(streamMap[s.ID])
+		delete(streamMap, s.ID)
 
 		// Check for maximum cache size
 		if cacheTotal > *cacheSize*1024*1024 {
