@@ -332,7 +332,6 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 				}
 			} else {
 				// Return cached file
-				log.Printf("Cached file: [%d] %s", s.ID, s.FileName)
 				byteChan <- buf
 				close(byteChan)
 				return
@@ -343,9 +342,7 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		// requesting the stream multiple times.  Yeah concurrency!
 		if streamChan, ok := streamMap[s.ID]; ok {
 			// Wait for stream to be ready, and return it
-			log.Printf("Waiting for stream: [%d] %s", s.ID, s.FileName)
 			byteChan <- <-streamChan
-			log.Printf("Received stream: [%d] %s", s.ID, s.FileName)
 			close(byteChan)
 			return
 		}
