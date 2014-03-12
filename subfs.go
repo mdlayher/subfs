@@ -87,16 +87,6 @@ func main() {
 		break
 	}
 
-	// Unmount the FUSE filesystem
-	if err := fuse.Unmount(*mount); err != nil {
-		log.Fatalf("Could not unmount subfs at %s: %s", *mount, err.Error())
-	}
-
-	// Close the FUSE filesystem
-	if err := c.Close(); err != nil {
-		log.Fatalf("Could not close subfs: %s", err.Error())
-	}
-
 	// Purge all cached files
 	for _, f := range fileCache {
 		// Close file
@@ -110,7 +100,36 @@ func main() {
 		}
 	}
 
-	log.Printf("subfs: removed %d cached files", len(fileCache))
+	log.Printf("subfs: removed %d cached file(s)", len(fileCache))
+
+	// Attempt to unmount the FUSE filesystem
+	retry := 3
+	for i := 0; i < retry + 1; i++ {
+		// Wait between attempts
+		if i > 0 {
+			<-time.After(time.Second * 3)
+		}
+
+		// Try unmount
+		if err := fuse.Unmount(*mount); err != nil {
+			// Force exit on last attempt
+			if i == retry {
+				log.Printf("subfs: could not unmount %s, halting!", *mount)
+				os.Exit(1)
+			}
+
+			log.Printf("subfs: could not unmount %s, retrying %d of %d...", *mount, i + 1, retry)
+		} else {
+			break
+		}
+	}
+
+	// Close the FUSE filesystem
+	if err := c.Close(); err != nil {
+		log.Fatalf("Could not close subfs: %s", err.Error())
+	}
+
+	log.Printf("subfs: done!")
 	return
 }
 
