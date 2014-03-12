@@ -165,23 +165,46 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 			directories = append(directories, entry)
 		}
 
-		// Iterate all returned media
-		for _, m := range content.Media {
-			// Predefined media filename format
-			mediaFormat := fmt.Sprintf("%02d - %s - %s.%s", m.Track, m.Artist, m.Title, m.Suffix)
+		// Iterate all returned audio
+		for _, a := range content.Audio {
+			// Predefined audio filename format
+			audioFormat := fmt.Sprintf("%02d - %s - %s.%s", a.Track, a.Artist, a.Title, a.Suffix)
 
 			// Create a directory entry
 			dir := fuse.Dirent{
-				Name: mediaFormat,
+				Name: audioFormat,
 				Type: fuse.DT_File,
 			}
 
 			// Add SubFile file to lookup map
 			nameToFile[dir.Name] = SubFile{
-				ID:       m.ID,
-				Created:  m.Created,
-				FileName: mediaFormat,
-				Size:     m.Size,
+				ID:       a.ID,
+				Created:  a.Created,
+				FileName: audioFormat,
+				Size:     a.Size,
+			}
+
+			// Append to list
+			directories = append(directories, dir)
+		}
+
+		// Iterate all returned video
+		for _, v := range content.Video {
+			// Predefined video filename format
+			videoFormat := fmt.Sprintf("%s.%s", v.Title, v.Suffix)
+
+			// Create a directory entry
+			dir := fuse.Dirent{
+				Name: videoFormat,
+				Type: fuse.DT_File,
+			}
+
+			// Add SubFile file to lookup map
+			nameToFile[dir.Name] = SubFile{
+				ID:       v.ID,
+				Created:  v.Created,
+				FileName: videoFormat,
+				Size:     v.Size,
 			}
 
 			// Append to list
