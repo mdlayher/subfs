@@ -382,10 +382,18 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		byteChan <- file
 		close(byteChan)
 
-		// Return bytes to others waiting, remove this stream
-		streamMap[s.ID] <- file
-		close(streamMap[s.ID])
-		delete(streamMap, s.ID)
+		// Attempt to return bytes to others waiting, remove this stream
+		go func() {
+			// Time out after waiting for 10 seconds
+			select {
+			case streamMap[s.ID] <- file:
+			case <-time.After(time.Second * 10):
+			}
+
+			// Remove stream from map
+			close(streamMap[s.ID])
+			delete(streamMap, s.ID)
+		}()
 
 		// Check for maximum cache size
 		if cacheTotal > *cacheSize*1024*1024 {
