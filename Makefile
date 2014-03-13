@@ -4,7 +4,7 @@ make:
 fmt:
 	go fmt
 	golint .
-	errcheck subfs
+	errcheck github.com/mdlayher/subfs
 
 darwin_386:
 	GOOS="darwin" GOARCH="386" go build -o bin/subfs_darwin_386
@@ -17,9 +17,3 @@ linux_386:
 
 linux_amd64:
 	GOOS="linux" GOARCH="amd64" go build -o bin/subfs_linux_amd64
-
-windows_386:
-	GOOS="windows" GOARCH="386" go build -o bin/subfs_windows_386.exe
-
-windows_amd64:
-	GOOS="windows" GOARCH="amd64" go build -o bin/subfs_windows_amd64.exe
