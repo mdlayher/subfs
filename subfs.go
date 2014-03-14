@@ -244,6 +244,7 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 				Created:  a.Created,
 				FileName: audioFormat,
 				Size:     a.Size,
+				IsVideo:  false,
 			}
 
 			// Append to list
@@ -272,6 +273,7 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 				Created:  v.Created,
 				FileName: videoFormat,
 				Size:     v.Size,
+				IsVideo:  true,
 			}
 
 			// Append to list
@@ -305,6 +307,7 @@ type SubFile struct {
 	ID       int64
 	Created  time.Time
 	FileName string
+	IsVideo  bool
 	Size     int64
 }
 
@@ -363,9 +366,18 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		// Generate a channel for clients wishing to wait on this stream
 		streamMap[s.ID] = make(chan []byte, 0)
 
-		// Open stream
-		log.Printf("Opening stream: [%d] %s", s.ID, s.FileName)
-		stream, err := subsonic.Stream(s.ID, nil)
+		// Open stream, depending on if item is video or audio
+		var streamOptions gosubsonic.StreamOptions
+		if s.IsVideo {
+			streamOptions = gosubsonic.StreamOptions{
+				Size: "1280x720",
+			}
+
+			log.Printf("Opening video stream: [%d] %s [%s]", s.ID, s.FileName, streamOptions.Size)
+		} else {
+			log.Printf("Opening audio stream: [%d] %s", s.ID, s.FileName)
+		}
+		stream, err := subsonic.Stream(s.ID, &streamOptions)
 		if err != nil {
 			log.Println(err)
 			byteChan <- nil
