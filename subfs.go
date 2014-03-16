@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -201,6 +202,23 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 			return nil, fuse.ENOENT
 		}
 
+		// Check for available cover art IDs
+		coverArt := make([]int64, 0)
+
+		// Check if an ID is unique to a slice of IDs
+		unique := func(id int64, slice []int64) bool {
+			// Iterate the slice
+			for _, item := range slice {
+				// If there's a match, not unique
+				if id == item {
+					return false
+				}
+			}
+
+			// No matches, unique item
+			return true
+		}
+
 		// Iterate all returned directories
 		for _, dir := range content.Directories {
 			// Create a directory entry
@@ -213,6 +231,11 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 			nameToDir[dir.Title] = SubDir{
 				ID:      dir.ID,
 				RelPath: d.RelPath + dir.Title,
+			}
+
+			// Check for cover art
+			if unique(dir.CoverArt, coverArt) {
+				coverArt = append(coverArt, dir.CoverArt)
 			}
 
 			// Append to list
@@ -247,6 +270,11 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 				IsVideo:  false,
 			}
 
+			// Check for cover art
+			if unique(a.CoverArt, coverArt) {
+				coverArt = append(coverArt, a.CoverArt)
+			}
+
 			// Append to list
 			directories = append(directories, dir)
 		}
@@ -274,6 +302,32 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 				FileName: videoFormat,
 				Size:     v.Size,
 				IsVideo:  true,
+			}
+
+			// Check for cover art
+			if unique(v.CoverArt, coverArt) {
+				coverArt = append(coverArt, v.CoverArt)
+			}
+
+			// Append to list
+			directories = append(directories, dir)
+		}
+
+		// Iterate all cover art
+		for _, c := range coverArt {
+			coverArtFormat := fmt.Sprintf("%d.jpg", c)
+
+			// Create a directory entry
+			dir := fuse.Dirent{
+				Name: coverArtFormat,
+				Type: fuse.DT_File,
+			}
+
+			// Add SubFile file to lookup map
+			nameToFile[dir.Name] = SubFile{
+				ID:       c,
+				FileName: coverArtFormat,
+				IsArt:    true,
 			}
 
 			// Append to list
@@ -307,6 +361,7 @@ type SubFile struct {
 	ID       int64
 	Created  time.Time
 	FileName string
+	IsArt    bool
 	IsVideo  bool
 	Size     int64
 }
@@ -366,23 +421,52 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		// Generate a channel for clients wishing to wait on this stream
 		streamMap[s.ID] = make(chan []byte, 0)
 
-		// Open stream, depending on if item is video or audio
-		var streamOptions gosubsonic.StreamOptions
-		if s.IsVideo {
-			streamOptions = gosubsonic.StreamOptions{
-				Size: "1280x720",
+		// Open stream, depending on if item is audio, video, or art
+		var stream io.ReadCloser
+
+		// Item is art
+		if s.IsArt {
+			log.Printf("Opening art stream: [%d] %s", s.ID, s.FileName)
+
+			// Get cover art stream
+			out, err := subsonic.GetCoverArt(s.ID, -1)
+			if err != nil {
+				log.Println(err)
+				byteChan <- nil
+				close(byteChan)
+				return
 			}
 
-			log.Printf("Opening video stream: [%d] %s [%s]", s.ID, s.FileName, streamOptions.Size)
+			// Output stream
+			stream = out
 		} else {
-			log.Printf("Opening audio stream: [%d] %s", s.ID, s.FileName)
-		}
-		stream, err := subsonic.Stream(s.ID, &streamOptions)
-		if err != nil {
-			log.Println(err)
-			byteChan <- nil
-			close(byteChan)
-			return
+			// Else, item is audio or video
+
+			// Stream options, for extra options
+			var streamOptions gosubsonic.StreamOptions
+			if s.IsVideo {
+				// Item is video
+				streamOptions = gosubsonic.StreamOptions{
+					Size: "1280x720",
+				}
+
+				log.Printf("Opening video stream: [%d] %s [%s]", s.ID, s.FileName, streamOptions.Size)
+			} else {
+				// Item is audio
+				log.Printf("Opening audio stream: [%d] %s", s.ID, s.FileName)
+			}
+
+			// Get media file stream
+			out, err := subsonic.Stream(s.ID, &streamOptions)
+			if err != nil {
+				log.Println(err)
+				byteChan <- nil
+				close(byteChan)
+				return
+			}
+
+			// Output stream
+			stream = out
 		}
 
 		// Read in stream
@@ -392,6 +476,11 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 			byteChan <- nil
 			close(byteChan)
 			return
+		}
+
+		// Calculate art size upon retrieval
+		if s.IsArt {
+			s.Size = int64(len(file))
 		}
 
 		// Close stream
