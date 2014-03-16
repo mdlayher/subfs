@@ -207,6 +207,11 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 
 		// Check if an ID is unique to a slice of IDs
 		unique := func(id int64, slice []int64) bool {
+			// Automatically reject ID of 0
+			if id == 0 {
+				return false
+			}
+
 			// Iterate the slice
 			for _, item := range slice {
 				// If there's a match, not unique
