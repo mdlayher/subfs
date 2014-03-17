@@ -413,7 +413,6 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 			} else {
 				// Return cached file
 				byteChan <- buf
-				close(byteChan)
 				return
 			}
 		}
@@ -423,7 +422,6 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if streamChan, ok := streamMap[s.ID]; ok {
 			// Wait for stream to be ready, and return it
 			byteChan <- <-streamChan
-			close(byteChan)
 			return
 		}
 
@@ -435,7 +433,6 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err != nil {
 			log.Println(err)
 			byteChan <- nil
-			close(byteChan)
 			return
 		}
 
@@ -444,7 +441,6 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err != nil {
 			log.Println(err)
 			byteChan <- nil
-			close(byteChan)
 			return
 		}
 
@@ -457,14 +453,12 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err := stream.Close(); err != nil {
 			log.Println(err)
 			byteChan <- nil
-			close(byteChan)
 			return
 		}
 
 		// Return bytes
 		log.Printf("Closing stream: [%d] %s", s.ID, s.FileName)
 		byteChan <- file
-		close(byteChan)
 
 		// Attempt to return bytes to others waiting, remove this stream
 		go func() {
@@ -530,6 +524,7 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 	select {
 	// Byte stream channel
 	case stream := <-byteChan:
+		close(byteChan)
 		return stream, nil
 	// Interrupt channel
 	case <-intr:
