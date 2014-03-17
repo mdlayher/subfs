@@ -426,52 +426,13 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		// Generate a channel for clients wishing to wait on this stream
 		streamMap[s.ID] = make(chan []byte, 0)
 
-		// Open stream, depending on if item is audio, video, or art
-		var stream io.ReadCloser
-
-		// Item is art
-		if s.IsArt {
-			log.Printf("Opening art stream: [%d] %s", s.ID, s.FileName)
-
-			// Get cover art stream
-			out, err := subsonic.GetCoverArt(s.ID, -1)
-			if err != nil {
-				log.Println(err)
-				byteChan <- nil
-				close(byteChan)
-				return
-			}
-
-			// Output stream
-			stream = out
-		} else {
-			// Else, item is audio or video
-
-			// Stream options, for extra options
-			var streamOptions gosubsonic.StreamOptions
-			if s.IsVideo {
-				// Item is video
-				streamOptions = gosubsonic.StreamOptions{
-					Size: "1280x720",
-				}
-
-				log.Printf("Opening video stream: [%d] %s [%s]", s.ID, s.FileName, streamOptions.Size)
-			} else {
-				// Item is audio
-				log.Printf("Opening audio stream: [%d] %s", s.ID, s.FileName)
-			}
-
-			// Get media file stream
-			out, err := subsonic.Stream(s.ID, &streamOptions)
-			if err != nil {
-				log.Println(err)
-				byteChan <- nil
-				close(byteChan)
-				return
-			}
-
-			// Output stream
-			stream = out
+		// Open stream
+		stream, err := s.openStream()
+		if err != nil {
+			log.Println(err)
+			byteChan <- nil
+			close(byteChan)
+			return
 		}
 
 		// Read in stream
@@ -570,4 +531,46 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 	case <-intr:
 		return nil, fuse.EINTR
 	}
+}
+
+// openStream returns the appropriate io.ReadCloser from a SubFile
+func (s SubFile) openStream() (io.ReadCloser, error) {
+	// Item is art
+	if s.IsArt {
+		log.Printf("Opening art stream: [%d] %s", s.ID, s.FileName)
+
+		// Get cover art stream
+		out, err := subsonic.GetCoverArt(s.ID, -1)
+		if err != nil {
+			return nil, err
+		}
+
+		// Output stream
+		return out, nil
+	}
+
+	// Else, item is audio or video
+
+	// Stream options, for extra options
+	var streamOptions gosubsonic.StreamOptions
+	if s.IsVideo {
+		// Item is video
+		streamOptions = gosubsonic.StreamOptions{
+			Size: "1280x720",
+		}
+
+		log.Printf("Opening video stream: [%d] %s [%s]", s.ID, s.FileName, streamOptions.Size)
+	} else {
+		// Item is audio
+		log.Printf("Opening audio stream: [%d] %s", s.ID, s.FileName)
+	}
+
+	// Get media file stream
+	out, err := subsonic.Stream(s.ID, &streamOptions)
+	if err != nil {
+		return nil, err
+	}
+
+	// Output stream
+	return out, nil
 }
