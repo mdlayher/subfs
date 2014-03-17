@@ -165,6 +165,38 @@ func (SubDir) Attr() fuse.Attr {
 	}
 }
 
+// Create does nothing, because subfs is read-only
+func (SubDir) Create(req *fuse.CreateRequest, res *fuse.CreateResponse, intr fs.Intr) (fs.Node, fs.Handle, fuse.Error) {
+	return nil, nil, fuse.Errno(syscall.EROFS)
+}
+
+// Fsync does nothing, because subfs is read-only
+func (SubDir) Fsync(req *fuse.FsyncRequest, intr fs.Intr) fuse.Error {
+	return fuse.Errno(syscall.EROFS)
+}
+
+// Link does nothing, because subfs is read-only
+func (SubDir) Link(req *fuse.LinkRequest, node fs.Node, intr fs.Intr) (fs.Node, fuse.Error) {
+	return nil, fuse.Errno(syscall.EROFS)
+}
+
+// Lookup scans the current directory for matching files or directories
+func (d SubDir) Lookup(name string, intr fs.Intr) (fs.Node, fuse.Error) {
+	// Lookup directory by name
+	if dir, ok := nameToDir[name]; ok {
+		dir.RelPath = name + "/"
+		return dir, nil
+	}
+
+	// Lookup file by name
+	if f, ok := nameToFile[name]; ok {
+		return f, nil
+	}
+
+	// File not found
+	return nil, fuse.ENOENT
+}
+
 // ReadDir returns a list of directory entries depending on the current path
 func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 	// List of directory entries to return
@@ -348,21 +380,44 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 	return directories, nil
 }
 
-// Lookup scans the current directory for matching files or directories
-func (d SubDir) Lookup(name string, intr fs.Intr) (fs.Node, fuse.Error) {
-	// Lookup directory by name
-	if dir, ok := nameToDir[name]; ok {
-		dir.RelPath = name + "/"
-		return dir, nil
-	}
+// Mkdir does nothing, because subfs is read-only
+func (SubDir) Mkdir(req *fuse.MkdirRequest, intr fs.Intr) (fs.Node, fuse.Error) {
+	return nil, fuse.Errno(syscall.EROFS)
+}
 
-	// Lookup file by name
-	if f, ok := nameToFile[name]; ok {
-		return f, nil
-	}
+// Mknod does nothing, because subfs is read-only
+func (SubDir) Mknod(req *fuse.MknodRequest, intr fs.Intr) (fs.Node, fuse.Error) {
+	return nil, fuse.Errno(syscall.EROFS)
+}
 
-	// File not found
-	return nil, fuse.ENOENT
+// Remove does nothing, because subfs is read-only
+func (SubDir) Remove(req *fuse.RemoveRequest, intr fs.Intr) fuse.Error {
+	return fuse.Errno(syscall.EROFS)
+}
+
+// Removexattr does nothing, because subfs is read-only
+func (SubDir) Removexattr(req *fuse.RemovexattrRequest, intr fs.Intr) fuse.Error {
+	return fuse.Errno(syscall.EROFS)
+}
+
+// Rename does nothing, because subfs is read-only
+func (SubDir) Rename(req *fuse.RenameRequest, node fs.Node, intr fs.Intr) fuse.Error {
+	return fuse.Errno(syscall.EROFS)
+}
+
+// Setattr does nothing, because subfs is read-only
+func (SubDir) Setattr(req *fuse.SetattrRequest, res *fuse.SetattrResponse, intr fs.Intr) fuse.Error {
+	return fuse.Errno(syscall.EROFS)
+}
+
+// Setxattr does nothing, because subfs is read-only
+func (SubDir) Setxattr(req *fuse.SetxattrRequest, intr fs.Intr) fuse.Error {
+	return fuse.Errno(syscall.EROFS)
+}
+
+// Symlink does nothing, because subfs is read-only
+func (SubDir) Symlink(req *fuse.SymlinkRequest, intr fs.Intr) (fs.Node, fuse.Error) {
+	return nil, fuse.Errno(syscall.EROFS)
 }
 
 // SubFile represents a file in Subsonic library
