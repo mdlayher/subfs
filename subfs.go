@@ -539,13 +539,7 @@ func (s SubFile) openStream() (io.ReadCloser, error) {
 		log.Printf("Opening art stream: [%d] %s", s.ID, s.FileName)
 
 		// Get cover art stream
-		out, err := subsonic.GetCoverArt(s.ID, -1)
-		if err != nil {
-			return nil, err
-		}
-
-		// Output stream
-		return out, nil
+		return subsonic.GetCoverArt(s.ID, -1)
 	}
 
 	// Else, item is audio or video
@@ -565,11 +559,5 @@ func (s SubFile) openStream() (io.ReadCloser, error) {
 	}
 
 	// Get media file stream
-	out, err := subsonic.Stream(s.ID, &streamOptions)
-	if err != nil {
-		return nil, err
-	}
-
-	// Output stream
-	return out, nil
+	return subsonic.Stream(s.ID, &streamOptions)
 }
