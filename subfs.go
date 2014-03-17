@@ -83,7 +83,11 @@ func main() {
 
 	// Serve the FUSE filesystem
 	log.Printf("subfs: %s@%s -> %s [cache: %d MB]", *user, *host, *mount, *cacheSize)
-	go fs.Serve(c, SubFS{})
+	go func() {
+		if err := fs.Serve(c, SubFS{}); err != nil {
+			log.Fatalf("Could not serve subfs at %s: %s", *mount, err.Error())
+		}
+	}()
 
 	// Wait for termination singals
 	sigChan := make(chan os.Signal, 1)
