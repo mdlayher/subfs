@@ -36,22 +36,18 @@ var cacheTotal int64
 // streamMap maps a fileID to a channel containing a file stream
 var streamMap map[int64]chan []byte
 
-// host is the host of the Subsonic server
-var host = flag.String("host", "", "Host of Subsonic server")
-
-// user is the username to connect to the Subsonic server
-var user = flag.String("user", "", "Username for the Subsonic server")
-
-// password is the password to connect to the Subsonic server
-var password = flag.String("password", "", "Password for the Subsonic server")
-
-// mount is the path where subfs will be mounted
-var mount = flag.String("mount", "", "Path where subfs will be mounted")
-
 // cacheSize is the maximum size of the local file cache in megabytes
 var cacheSize = flag.Int64("cache", 100, "Size of the local file cache, in megabytes")
 
 func main() {
+	// Flags to connect to Subsonic server
+	host := flag.String("host", "", "Host of Subsonic server")
+	user := flag.String("user", "", "Username for the Subsonic server")
+	password := flag.String("password", "", "Password for the Subsonic server")
+
+	// Flag for subfs mount point
+	mount := flag.String("mount", "", "Path where subfs will be mounted")
+
 	// Parse command line flags
 	flag.Parse()
 
