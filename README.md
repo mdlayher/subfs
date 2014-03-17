@@ -19,7 +19,7 @@ Usage
 To use subfs, simply run the binary and enter the appropriate command line flags to choose a host, username,
 password, mount point, and cache size.
 
-`./subfs -host="demo.subsonic.org" -user="guest1" -password="guest" -mount="/tmp/subfs" -cache=1024`
+`$ ./subfs -host="demo.subsonic.org" -user="guest1" -password="guest" -mount="/tmp/subfs" -cache=1024`
 
 subfs will connect to your Subsonic media server, and cache up to `-cache` megabytes of data to your local
 machine.  The cached data will be cleared from your system's temp directory upon subfs unmount.
