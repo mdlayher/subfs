@@ -323,8 +323,20 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 
 		// Iterate all returned audio
 		for _, a := range content.Audio {
+			// Check if this media will be transcoded, to override its type and estimate its size
+			suffix := a.Suffix
+			size := a.Size
+			if a.TranscodedSuffix != "" {
+				suffix = a.TranscodedSuffix
+
+				// Since we have no idea what Subsonic's transcoding settings are, we will estimate
+				// using MP3 CBR 320 as our benchmark, being that it will likely over-estimate
+				// Thanks: http://www.jeffreysward.com/editorials/mp3size.htm
+				size = ((a.DurationRaw * 320) / 8) * 1024
+			}
+
 			// Predefined audio filename format
-			audioFormat := fmt.Sprintf("%02d - %s - %s.%s", a.Track, a.Artist, a.Title, a.Suffix)
+			audioFormat := fmt.Sprintf("%02d - %s - %s.%s", a.Track, a.Artist, a.Title, suffix)
 
 			// Check for any characters which may cause trouble with filesystem display
 			for _, b := range badChars {
@@ -342,7 +354,7 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 				ID:       a.ID,
 				Created:  a.Created,
 				FileName: audioFormat,
-				Size:     a.Size,
+				Size:     size,
 				IsVideo:  false,
 			}
 
@@ -534,10 +546,8 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 			return
 		}
 
-		// Calculate art size upon retrieval
-		if s.IsArt {
-			s.Size = int64(len(file))
-		}
+		// Calculate actual size upon retrieval
+		s.Size = int64(len(file))
 
 		// Close stream
 		if err := stream.Close(); err != nil {
