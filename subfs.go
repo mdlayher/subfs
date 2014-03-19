@@ -33,6 +33,9 @@ var fileCache map[string]os.File
 // cacheTotal is the total size of local files in the cache
 var cacheTotal int64
 
+// indexCache stores the fetched indexes temporarily
+var indexCache []gosubsonic.Index
+
 // streamMap maps a fileID to a channel containing a file stream
 var streamMap map[int64]chan []byte
 
@@ -67,6 +70,9 @@ func main() {
 	// Initialize file cache
 	fileCache = map[string]os.File{}
 	cacheTotal = 0
+
+	// Initialize index cache
+	indexCache = make([]gosubsonic.Index, 0)
 
 	// Initialize stream map
 	streamMap = map[int64]chan []byte{}
@@ -200,10 +206,22 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 
 	// If at root of filesystem, fetch indexes
 	if d.RelPath == "" {
-		index, err := subsonic.GetIndexes(-1, -1)
-		if err != nil {
-			log.Printf("Failed to retrieve indexes: %s", err.Error())
-			return nil, fuse.ENOENT
+		// Check for a cached index, to speed up filesystem display
+		index := make([]gosubsonic.Index, 0)
+		if len(indexCache) > 0 {
+			index = indexCache
+		} else {
+			// Else, fetch a new index
+			tempIndex, err := subsonic.GetIndexes(-1, -1)
+			if err != nil {
+				log.Printf("Failed to retrieve indexes: %s", err.Error())
+				return nil, fuse.ENOENT
+			}
+
+			// Cache and return indexes
+			log.Printf("Caching %d indexes", len(tempIndex))
+			indexCache = tempIndex
+			index = tempIndex
 		}
 
 		// Iterate indices
