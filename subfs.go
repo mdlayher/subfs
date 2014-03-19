@@ -36,6 +36,9 @@ var cacheTotal int64
 // indexCache stores the fetched indexes temporarily
 var indexCache []gosubsonic.Index
 
+// indexChan blocks subfs from getting indexes until the cache is populated
+var indexChan chan bool
+
 // streamMap maps a fileID to a channel containing a file stream
 var streamMap map[int64]chan []byte
 
@@ -73,6 +76,8 @@ func main() {
 
 	// Initialize index cache
 	indexCache = make([]gosubsonic.Index, 0)
+	indexChan = make(chan bool, 0)
+	go cacheIndexes()
 
 	// Initialize stream map
 	streamMap = map[int64]chan []byte{}
@@ -146,6 +151,27 @@ func main() {
 	return
 }
 
+// cacheIndexes populates and refills the indexes cache at regular intervals
+func cacheIndexes() {
+	// Immediately cache the current index
+	for {
+		// Fetch indexes
+		index, err := subsonic.GetIndexes(-1, -1)
+		if err != nil {
+			log.Printf("Failed to retrieve indexes: %s", err.Error())
+			continue
+		}
+
+		// Cache and return indexes
+		log.Printf("Caching %d indexes", len(index))
+		indexCache = index
+		indexChan <- true
+
+		// Repeat at regular intervals
+		<-time.After(10 * time.Minute)
+	}
+}
+
 // SubFS represents the root of the filesystem
 type SubFS struct{}
 
@@ -206,23 +232,13 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 
 	// If at root of filesystem, fetch indexes
 	if d.RelPath == "" {
-		// Check for a cached index, to speed up filesystem display
-		index := make([]gosubsonic.Index, 0)
-		if len(indexCache) > 0 {
-			index = indexCache
-		} else {
-			// Else, fetch a new index
-			tempIndex, err := subsonic.GetIndexes(-1, -1)
-			if err != nil {
-				log.Printf("Failed to retrieve indexes: %s", err.Error())
-				return nil, fuse.ENOENT
-			}
-
-			// Cache and return indexes
-			log.Printf("Caching %d indexes", len(tempIndex))
-			indexCache = tempIndex
-			index = tempIndex
+		// If empty, wait for indexes to be available
+		if len(indexCache) == 0 {
+			<-indexChan
 		}
+
+		// Get index from cache
+		index := indexCache
 
 		// Iterate indices
 		for _, i := range index {
