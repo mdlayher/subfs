@@ -1,4 +1,5 @@
 make:
+	go build github.com/mdlayher/gosubsonic
 	go build -o bin/subfs
 
 fmt:
