@@ -256,8 +256,16 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 			return true
 		}
 
+		// List of bad characters which should be replaced in filenames
+		badChars := []string{"/", "\\"}
+
 		// Iterate all returned directories
 		for _, dir := range content.Directories {
+			// Check for any characters which may cause trouble with filesystem display
+			for _, b := range badChars {
+				dir.Title = strings.Replace(dir.Title, b, "_", -1)
+			}
+
 			// Create a directory entry
 			entry := fuse.Dirent{
 				Name: dir.Title,
@@ -278,9 +286,6 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 			// Append to list
 			directories = append(directories, entry)
 		}
-
-		// List of bad characters which should be replaced in filenames
-		badChars := []string{"/", "\\"}
 
 		// Iterate all returned audio
 		for _, a := range content.Audio {
