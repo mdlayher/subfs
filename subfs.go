@@ -323,48 +323,67 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 
 		// Iterate all returned audio
 		for _, a := range content.Audio {
-			// Check if this media will be transcoded, to override its type and estimate its size
-			suffix := a.Suffix
-			size := a.Size
-			if a.TranscodedSuffix != "" {
-				suffix = a.TranscodedSuffix
 
-				// Since we have no idea what Subsonic's transcoding settings are, we will estimate
-				// using MP3 CBR 320 as our benchmark, being that it will likely over-estimate
-				// Thanks: http://www.jeffreysward.com/editorials/mp3size.htm
-				size = ((a.DurationRaw * 320) / 8) * 1024
+			// Check for lossless and lossy transcode
+			transcodes := []struct {
+				suffix string
+				size   int64
+			}{
+				{a.Suffix, a.Size},
+				{a.TranscodedSuffix, 0},
 			}
 
-			// Predefined audio filename format
-			audioFormat := fmt.Sprintf("%02d - %s - %s.%s", a.Track, a.Artist, a.Title, suffix)
+			for _, t := range transcodes {
+				// If suffix is empty (source is lossy), skip this file
+				if t.suffix == "" {
+					continue
+				}
 
-			// Check for any characters which may cause trouble with filesystem display
-			for _, b := range badChars {
-				audioFormat = strings.Replace(audioFormat, b, "_", -1)
+				// Mark file as lossless by default
+				lossless := true
+
+				// If size is empty (transcode to lossy), estimate it and mark as lossy
+				if t.size == 0 {
+					lossless = false
+
+					// Since we have no idea what Subsonic's transcoding settings are, we will estimate
+					// using MP3 CBR 320 as our benchmark, being that it will likely over-estimate
+					// Thanks: http://www.jeffreysward.com/editorials/mp3size.htm
+					t.size = ((a.DurationRaw * 320) / 8) * 1024
+				}
+
+				// Predefined audio filename format
+				audioFormat := fmt.Sprintf("%02d - %s - %s.%s", a.Track, a.Artist, a.Title, t.suffix)
+
+				// Check for any characters which may cause trouble with filesystem display
+				for _, b := range badChars {
+					audioFormat = strings.Replace(audioFormat, b, "_", -1)
+				}
+
+				// Create a directory entry
+				dir := fuse.Dirent{
+					Name: audioFormat,
+					Type: fuse.DT_File,
+				}
+
+				// Add SubFile file to lookup map
+				nameToFile[dir.Name] = SubFile{
+					ID:       a.ID,
+					Created:  a.Created,
+					FileName: audioFormat,
+					IsVideo:  false,
+					Lossless: lossless,
+					Size:     t.size,
+				}
+
+				// Check for cover art
+				if unique(a.CoverArt, coverArt) {
+					coverArt = append(coverArt, a.CoverArt)
+				}
+
+				// Append to list
+				directories = append(directories, dir)
 			}
-
-			// Create a directory entry
-			dir := fuse.Dirent{
-				Name: audioFormat,
-				Type: fuse.DT_File,
-			}
-
-			// Add SubFile file to lookup map
-			nameToFile[dir.Name] = SubFile{
-				ID:       a.ID,
-				Created:  a.Created,
-				FileName: audioFormat,
-				Size:     size,
-				IsVideo:  false,
-			}
-
-			// Check for cover art
-			if unique(a.CoverArt, coverArt) {
-				coverArt = append(coverArt, a.CoverArt)
-			}
-
-			// Append to list
-			directories = append(directories, dir)
 		}
 
 		// Iterate all returned video
@@ -474,6 +493,7 @@ type SubFile struct {
 	FileName string
 	IsArt    bool
 	IsVideo  bool
+	Lossless bool
 	Size     int64
 }
 
@@ -535,6 +555,10 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err != nil {
 			log.Println(err)
 			byteChan <- nil
+
+			// Remove stream from map on error
+			close(streamMap[s.ID])
+			delete(streamMap, s.ID)
 			return
 		}
 
@@ -543,6 +567,10 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err != nil {
 			log.Println(err)
 			byteChan <- nil
+
+			// Remove stream from map on error
+			close(streamMap[s.ID])
+			delete(streamMap, s.ID)
 			return
 		}
 
@@ -553,6 +581,10 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 		if err := stream.Close(); err != nil {
 			log.Println(err)
 			byteChan <- nil
+
+			// Remove stream from map on error
+			close(streamMap[s.ID])
+			delete(streamMap, s.ID)
 			return
 		}
 
@@ -644,6 +676,13 @@ func (s SubFile) openStream() (io.ReadCloser, error) {
 
 	// Else, item is audio or video
 
+	// Check for lossless audio
+	if !s.IsVideo && s.Lossless {
+		// Attempt to get media file in raw, lossless form
+		log.Printf("Opening lossless audio stream: [%d] %s", s.ID, s.FileName)
+		return subsonic.Download(s.ID)
+	}
+
 	// Stream options, for extra options
 	var streamOptions gosubsonic.StreamOptions
 	if s.IsVideo {
@@ -655,7 +694,7 @@ func (s SubFile) openStream() (io.ReadCloser, error) {
 		log.Printf("Opening video stream: [%d] %s [%s]", s.ID, s.FileName, streamOptions.Size)
 	} else {
 		// Item is audio
-		log.Printf("Opening audio stream: [%d] %s", s.ID, s.FileName)
+		log.Printf("Opening transcoded audio stream: [%d] %s", s.ID, s.FileName)
 	}
 
 	// Get media file stream
