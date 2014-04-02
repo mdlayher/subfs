@@ -172,5 +172,5 @@ type SubFS struct{}
 
 // Root is called to get the root directory node of this filesystem
 func (fs SubFS) Root() (fs.Node, fuse.Error) {
-	return &SubDir{RelPath: ""}, nil
+	return &SubDir{Root: true}, nil
 }
