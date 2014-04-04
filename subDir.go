@@ -9,6 +9,7 @@ import (
 
 	"bazil.org/fuse"
 	"bazil.org/fuse/fs"
+	"github.com/mdlayher/goset"
 )
 
 // SubDir represents a directory in the filesystem
@@ -101,27 +102,8 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 		return nil, fuse.ENOENT
 	}
 
-	// Check for available cover art IDs
-	coverArt := make([]int64, 0)
-
-	// Check if an ID is unique to a slice of IDs
-	unique := func(id int64, slice []int64) bool {
-		// Automatically reject ID of 0
-		if id == 0 {
-			return false
-		}
-
-		// Iterate the slice
-		for _, item := range slice {
-			// If there's a match, not unique
-			if id == item {
-				return false
-			}
-		}
-
-		// No matches, unique item
-		return true
-	}
+	// Check for unique, available cover art IDs
+	coverArt := set.New()
 
 	// List of bad characters which should be replaced in filenames
 	badChars := []string{"/", "\\"}
@@ -146,9 +128,7 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 		}
 
 		// Check for cover art
-		if unique(dir.CoverArt, coverArt) {
-			coverArt = append(coverArt, dir.CoverArt)
-		}
+		coverArt.Add(dir.CoverArt)
 
 		// Append to list
 		directories = append(directories, entry)
@@ -210,9 +190,7 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 			}
 
 			// Check for cover art
-			if unique(a.CoverArt, coverArt) {
-				coverArt = append(coverArt, a.CoverArt)
-			}
+			coverArt.Add(a.CoverArt)
 
 			// Append to list
 			directories = append(directories, dir)
@@ -245,16 +223,16 @@ func (d SubDir) ReadDir(intr fs.Intr) ([]fuse.Dirent, fuse.Error) {
 		}
 
 		// Check for cover art
-		if unique(v.CoverArt, coverArt) {
-			coverArt = append(coverArt, v.CoverArt)
-		}
+		coverArt.Add(v.CoverArt)
 
 		// Append to list
 		directories = append(directories, dir)
 	}
 
 	// Iterate all cover art
-	for _, c := range coverArt {
+	for _, e := range coverArt.Enumerate() {
+		// Type-hint to int64
+		c := e.(int64)
 		coverArtFormat := fmt.Sprintf("%d.jpg", c)
 
 		// Create a directory entry
