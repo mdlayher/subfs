@@ -244,9 +244,17 @@ func (s SubFile) openStream() (io.ReadCloser, error) {
 
 	// Check for lossless audio
 	if !s.IsVideo && s.Lossless {
+		// Check if the Subsonic user is permitted to "download" raw files
+		stream, err := subsonic.Download(s.ID)
+		if strings.Contains(err.Error(), "not authorized to download files") {
+			// Stream a transcoded file instead
+			log.Printf("Opening transcoded audio stream: [%d] %s", s.ID, s.FileName)
+			return subsonic.Stream(s.ID, nil)
+		}
+
 		// Attempt to get media file in raw, non-transcoded form
 		log.Printf("Opening audio stream: [%d] %s", s.ID, s.FileName)
-		return subsonic.Download(s.ID)
+		return stream, nil
 	}
 
 	// Stream options, for extra options
