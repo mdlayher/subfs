@@ -22,8 +22,8 @@ var nameToDir map[string]SubDir
 // nameToFile maps a file name to its SubFile
 var nameToFile map[string]SubFile
 
-// fileCache maps a file name to its file pointer
-var fileCache map[string]os.File
+// fileCache maps a file ID to its file pointer
+var fileCache map[int64]os.File
 
 // cacheTotal is the total size of local files in the cache
 var cacheTotal int64
@@ -41,6 +41,8 @@ var streamMap map[int64]chan []byte
 var cacheSize = flag.Int64("cache", 100, "Size of the local file cache, in megabytes")
 
 func main() {
+	log.SetFlags(log.Ldate | log.Ltime | log.Lshortfile)
+
 	// Flags to connect to Subsonic server
 	host := flag.String("host", "", "Host of Subsonic server")
 	user := flag.String("user", "", "Username for the Subsonic server")
@@ -66,7 +68,7 @@ func main() {
 	nameToFile = map[string]SubFile{}
 
 	// Initialize file cache
-	fileCache = map[string]os.File{}
+	fileCache = map[int64]os.File{}
 	cacheTotal = 0
 
 	// Initialize index cache

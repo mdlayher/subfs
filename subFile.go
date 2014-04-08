@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"io"
 	"io/ioutil"
 	"log"
@@ -34,21 +35,48 @@ func (s SubFile) Attr() fuse.Attr {
 	}
 }
 
-// ReadAll opens a file stream from Subsonic and returns the resulting bytes
-func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
+// Read opens a file stream from Subsonic, caches the stream as appropriate, and returns the
+// resulting bytes needed with an offset and size applied
+func (s SubFile) Read(req *fuse.ReadRequest, res *fuse.ReadResponse, intr fs.Intr) fuse.Error {
 	// Byte stream to return data
 	byteChan := make(chan []byte)
 
-	// Fetch file in background
-	go func() {
-		// Check for file in cache
-		if cFile, ok := fileCache[s.FileName]; ok {
-			// Check for empty file, meaning the cached file got wiped out
-			buf, err := ioutil.ReadFile(cFile.Name())
-			if len(buf) == 0 && strings.Contains(err.Error(), "no such file or directory") {
-				// Purge item from cache
+	// Fetch the file
+	go s.fetchFile(req, byteChan)
+
+	// Wait for an event on read
+	select {
+	// Byte stream channel
+	case stream := <-byteChan:
+		res.Data = stream
+		//close(byteChan)
+		return nil
+	// Interrupt channel
+	case <-intr:
+		return fuse.EINTR
+	}
+}
+
+// fetchFile invokes a file download request, and returns the subsequent cached stream
+// for all other clients
+func (s SubFile) fetchFile(req *fuse.ReadRequest, byteChan chan []byte) {
+	// Check for file in cache
+	if cFile, ok := fileCache[s.ID]; ok {
+		// Make a buffer equal the requested size
+		buf := make([]byte, req.Size)
+
+		for {
+			// Read the file at the specified offset into the buffer
+			n, err := cFile.ReadAt(buf, req.Offset)
+
+			// If bytes returned and no error or EOF detected, we got stream, so return it
+			if err == nil || err == io.EOF {
+				byteChan <- buf
+				return
+			} else if n == 0 && strings.Contains(err.Error(), "no such file or directory") {
+				// File was removed from the cache, so purge it
 				log.Printf("Cache missing: [%d] %s", s.ID, s.FileName)
-				delete(fileCache, s.FileName)
+				delete(fileCache, s.ID)
 				cacheTotal = atomic.AddInt64(&cacheTotal, -1*s.Size)
 
 				// Print some cache metrics
@@ -60,136 +88,146 @@ func (s SubFile) ReadAll(intr fs.Intr) ([]byte, fuse.Error) {
 				if err := cFile.Close(); err != nil {
 					log.Println(err)
 				}
+
+				// Break loop to begin re-opening stream
+				break
 			} else {
-				// Return cached file
-				byteChan <- buf
+				// Some other condition occurred, so log it
+				log.Println(err)
+				<-time.After(1 * time.Second)
+			}
+		}
+	}
+
+	// Open stream
+	stream, err := s.openStream()
+	if err != nil {
+		log.Println(err)
+		byteChan <- nil
+		return
+	}
+
+	// Generate a temporary file
+	tmpFile, err := ioutil.TempFile(os.TempDir(), "subfs")
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	// Add file to cache map
+	fileCache[s.ID] = *tmpFile
+
+	// Invoke a recursive goroutine to wait for this file to be ready
+	go s.fetchFile(req, byteChan)
+
+	// Track total download size, for progress reporting
+	var total int64
+	atomic.StoreInt64(&total, 0)
+
+	// Stop on file completion
+	stopProgressChan := make(chan bool)
+	go func() {
+		// Print progress every second
+		progress := time.NewTicker(1 * time.Second)
+
+		// Calculate total file size
+		totalSize := float64(s.Size)/1024/1024
+
+		for {
+			select {
+			// Print progress
+			case <-progress.C:
+				// Capture current progress
+				currTotal := atomic.LoadInt64(&total)
+				current := float64(currTotal)/1024/1024
+
+				// Capture current percentage
+				percent := int64(float64(float64(total) / float64(s.Size)) * 100)
+
+				log.Printf("[%d] [%03d%%] %0.3f / %0.3f MB", s.ID, percent, current, totalSize)
+			// Stop printing
+			case <-stopProgressChan:
 				return
 			}
 		}
-
-		// Check for pre-existing stream in progress, so that multiple clients can receive it without
-		// requesting the stream multiple times.  Yeah concurrency!
-		if streamChan, ok := streamMap[s.ID]; ok {
-			// Wait for stream to be ready, and return it
-			byteChan <- <-streamChan
-			return
-		}
-
-		// Generate a channel for clients wishing to wait on this stream
-		streamMap[s.ID] = make(chan []byte, 0)
-
-		// Open stream
-		stream, err := s.openStream()
-		if err != nil {
-			log.Println(err)
-			byteChan <- nil
-
-			// Remove stream from map on error
-			close(streamMap[s.ID])
-			delete(streamMap, s.ID)
-			return
-		}
-
-		// Read in stream
-		file, err := ioutil.ReadAll(stream)
-		if err != nil {
-			log.Println(err)
-			byteChan <- nil
-
-			// Remove stream from map on error
-			close(streamMap[s.ID])
-			delete(streamMap, s.ID)
-			return
-		}
-
-		// Calculate actual size upon retrieval
-		s.Size = int64(len(file))
-
-		// Close stream
-		if err := stream.Close(); err != nil {
-			log.Println(err)
-			byteChan <- nil
-
-			// Remove stream from map on error
-			close(streamMap[s.ID])
-			delete(streamMap, s.ID)
-			return
-		}
-
-		// Return bytes
-		log.Printf("Closing stream: [%d] %s", s.ID, s.FileName)
-		byteChan <- file
-
-		// Attempt to return bytes to others waiting, remove this stream
-		go func() {
-			// Time out after waiting for 10 seconds
-			select {
-			case streamMap[s.ID] <- file:
-			case <-time.After(time.Second * 10):
-			}
-
-			// Remove stream from map
-			close(streamMap[s.ID])
-			delete(streamMap, s.ID)
-		}()
-
-		// Check for maximum cache size
-		if cacheTotal > *cacheSize*1024*1024 {
-			log.Printf("Cache full (%d MB), skipping local cache", *cacheSize)
-			return
-		}
-
-		// Check if cache will overflow if file is added
-		if cacheTotal+s.Size > *cacheSize*1024*1024 {
-			log.Printf("File will overflow cache (%0.3f MB), skipping local cache", float64(s.Size)/1024/1024)
-			return
-		}
-
-		// If file is greater than 50MB, skip caching to conserve memory
-		threshold := 50
-		if s.Size > int64(threshold*1024*1024) {
-			log.Printf("File too large (%0.3f > %0d MB), skipping local cache", float64(s.Size)/1024/1024, threshold)
-			return
-		}
-
-		// Generate a temporary file
-		tmpFile, err := ioutil.TempFile(os.TempDir(), "subfs")
-		if err != nil {
-			log.Println(err)
-			return
-		}
-
-		// Write out temporary file
-		if _, err := tmpFile.Write(file); err != nil {
-			log.Println(err)
-			return
-		}
-
-		// Add file to cache map
-		log.Printf("Caching file: [%d] %s", s.ID, s.FileName)
-		fileCache[s.FileName] = *tmpFile
-
-		// Add file's size to cache total size
-		cacheTotal = atomic.AddInt64(&cacheTotal, s.Size)
-
-		// Print some cache metrics
-		cacheUse := float64(cacheTotal) / 1024 / 1024
-		cacheAdd := float64(s.Size) / 1024 / 1024
-		log.Printf("Cache use: %0.3f / %d.000 MB (+%0.3f MB)", cacheUse, *cacheSize, cacheAdd)
-
-		return
 	}()
 
-	// Wait for an event on read
-	select {
-	// Byte stream channel
-	case stream := <-byteChan:
-		close(byteChan)
-		return stream, nil
-	// Interrupt channel
-	case <-intr:
-		return nil, fuse.EINTR
+	// Read in the stream, dumping it to a temporary file as we go
+	streamBuf := bufio.NewReader(stream)
+	for {
+		// Read one buffer from the stream
+		buf := make([]byte, 8192)
+		x, err := streamBuf.Read(buf)
+		if x == 0 || err != nil {
+			if err != io.EOF {
+				log.Println(err)
+			}
+
+			// Store file size
+			s.Size = atomic.LoadInt64(&total)
+
+			break
+		}
+
+		atomic.AddInt64(&total, int64(x))
+
+		// Write to the file
+		y, err := tmpFile.Write(buf[:x])
+		if y == 0 || err != nil {
+			log.Println(err)
+			break
+		}
 	}
+
+	// Stop progress reporting
+	stopProgressChan <- true
+
+	// Close stream
+	log.Printf("Closing stream: [%d] %s", s.ID, s.FileName)
+	if err := stream.Close(); err != nil {
+		log.Println(err)
+		return
+	}
+
+	// Cache conditions
+	// Check for maximum cache size
+	cacheOne := cacheTotal > *cacheSize*1024*1024
+	// Check if cache will overflow if file is added
+	cacheTwo := cacheTotal+s.Size > *cacheSize*1024*1024
+	// If file is greater than 50MB, skip caching to conserve memory
+	threshold := 50
+	cacheThree := s.Size > int64(threshold*1024*1024)
+
+	// Print messages for failure conditions
+	if cacheOne {
+		log.Printf("Cache full (%d MB), skipping local cache", *cacheSize)
+	} else if cacheTwo {
+		log.Printf("File will overflow cache (%0.3f MB), skipping local cache", float64(s.Size)/1024/1024)
+	} else if cacheThree {
+		log.Printf("File too large (%0.3f > %0d MB), skipping local cache", float64(s.Size)/1024/1024, threshold)
+	}
+
+	// Check for ANY failure conditions, delete file if so
+	if cacheOne || cacheTwo || cacheThree {
+		// Close file
+		if err := tmpFile.Close(); err != nil {
+			log.Println(err)
+		}
+
+		// Remove file
+		if err := os.Remove(tmpFile.Name()); err != nil {
+			log.Println(err)
+		}
+		return
+	}
+
+	// Add file's size to cache total size
+	cacheTotal = atomic.AddInt64(&cacheTotal, s.Size)
+
+	// Print some cache metrics
+	cacheUse := float64(cacheTotal) / 1024 / 1024
+	cacheAdd := float64(s.Size) / 1024 / 1024
+	log.Printf("Cache use: %0.3f / %d.000 MB (+%0.3f MB)", cacheUse, *cacheSize, cacheAdd)
 }
 
 // openStream returns the appropriate io.ReadCloser from a SubFile
@@ -206,8 +244,8 @@ func (s SubFile) openStream() (io.ReadCloser, error) {
 
 	// Check for lossless audio
 	if !s.IsVideo && s.Lossless {
-		// Attempt to get media file in raw, lossless form
-		log.Printf("Opening lossless audio stream: [%d] %s", s.ID, s.FileName)
+		// Attempt to get media file in raw, non-transcoded form
+		log.Printf("Opening audio stream: [%d] %s", s.ID, s.FileName)
 		return subsonic.Download(s.ID)
 	}
 
